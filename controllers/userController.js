@@ -1,25 +1,40 @@
-const passport = require("passport");
 const jwt = require("jsonwebtoken");
-
+const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const { sendEmail } = require("../utils/mailer");
 
 exports.handleLogin = async (req, res, next) => {
-    passport.authenticate("local", {
-        failureRedirect: "/users/login",
-        failureFlash: true,
-    })(req, res, next);
-};
+    const { email, password } = req.body;
+    try {
+        const user = await User.findOne({ email });
+        if (!user) {
+            const error = new Error("کاربری با این ایمیل یافت نشد.");
+            error.statusCode = 404;
+            throw error;
+        }
+        const isEqual = await bcrypt.compare(password, user.password);
 
-exports.rememberMe = (req, res) => {
-    if (req.body.remember) {
-        req.session.cookie.originalMaxAge = 24 * 60 * 60 * 1000; // 1 day 24
-    } else {
-        req.session.cookie.expire = null;
+        if (isEqual) {
+            const token = jwt.sign({
+                user: {
+                    userId: user._id.toString(),
+                    email: user.email,
+                    fullname: user.fullname
+                },
+            },
+            process.env.JWT_SECRET);
+            res.status(200).json({token, userId: user._id.toString() });
+        }
+        else {
+            const error = new Error("ادرس ایمیل یا کلمه عبور اشتباه است.");
+            error.statusCode = 422;
+            throw error;
+        }
+    } catch (err) {
+        next(err);
     }
-
-    res.redirect("/dashboard");
 };
+
 
 exports.logout = (req, res) => {
     req.session = null;
@@ -27,23 +42,17 @@ exports.logout = (req, res) => {
     res.redirect("/users/login");
 };
 
-exports.createUser = async (req, res) => {
-    const errors = [];
+exports.createUser = async (req, res, next) => {
     try {
         await User.userValidation(req.body);
         const { fullname, email, password } = req.body;
-
         const user = await User.findOne({ email });
         if (user) {
-            errors.push({ message: "کاربری با این ایمیل موجود است" });
-            return res.render("register", {
-                pageTitle: "ثبت نام کاربر",
-                path: "/register",
-                errors,
-            });
-        }
-
-        await User.create({ fullname, email, password });
+            error = new Error("کاربری با این ایمیل وجود دارد.");
+            error.statusCode= 422;
+            throw error;
+            };
+            await User.create({ fullname, email, password });
 
         //? Send Welcome Email
         sendEmail(
@@ -53,39 +62,20 @@ exports.createUser = async (req, res) => {
             "خیلی خوشحالیم که به جمع ما وبلاگرهای خفن ملحق شدی"
         );
 
-        req.flash("success_msg", "ثبت نام موفقیت آمیز بود.");
-        res.redirect("/users/login");
-    } catch (err) {
-        console.log(err);
-        err.inner.forEach((e) => {
-            errors.push({
-                name: e.path,
-                message: e.message,
-            });
-        });
+        res.status(201).json("ثبت نام با موفقیت انجام شد.");
 
-        return res.render("register", {
-            pageTitle: "ثبت نام کاربر",
-            path: "/register",
-            errors,
-        });
-    }
+        } catch (err) {
+        next(err);
 };
-
-exports.handleForgetPassword = async (req, res) => {
+};
+exports.handleForgetPassword = async (req, res, next) => {
     const { email } = req.body;
-
+try {
     const user = await User.findOne({ email: email });
-
     if (!user) {
-        req.flash("error", "کاربری با ایمیل در پایگاه داده ثبت نیست");
-
-        return res.render("forgetPass", {
-            pageTitle: "فراموشی رمز عبور",
-            path: "/login",
-            message: req.flash("success_msg"),
-            error: req.flash("error"),
-        });
+       const error = new Error("کاربری با این ایمیل در پایگاه داده ثبت نشده است.");
+       error.statusCode = 404;
+       throw error;
     }
 
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
@@ -102,66 +92,41 @@ exports.handleForgetPassword = async (req, res) => {
         <a href="${resetLink}">لینک تغییر رمز عبور</a>
     `
     );
+        res.json({message: "لینک ریست کلمه عبور با موفقیت ارسال شد.", token});
 
-    req.flash("success_msg", "ایمیل حاوی لینک با موفقیت ارسال شد");
-
-    res.render("forgetPass", {
-        pageTitle: "فراموشی رمز عبور",
-        path: "/login",
-        message: req.flash("success_msg"),
-        error: req.flash("error"),
-    });
-};
-
-exports.resetPassword = async (req, res) => {
+} catch (err) {
+    next(err);
+    }
+}
+exports.handleResetPassword = async (req, res, next) => {
     const token = req.params.token;
-
-    let decodedToken;
-
+    const { password, confirmPassword } = req.body;
+    
     try {
         decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-        console.log(decodedToken);
-    } catch (err) {
-        console.log(err);
-        if (!decodedToken) {
-            return res.redirect("/404");
+        
+        if(!decodedToken) {
+            const error = new Error("شما مجوز این کار را ندارید.");
+            error.statusCode = 401;
+            throw error;
         }
+
+        if (password !== confirmPassword) {
+        const error = new Error("رمز عبور با تکرار ان همخوانی ندارد.");
+        error.statusCode= 422;
+        throw error;
     }
-
-    res.render("resetPass", {
-        pageTitle: "تغییر پسورد",
-        path: "/login",
-        message: req.flash("success_msg"),
-        error: req.flash("error"),
-        userId: decodedToken.userId,
-    });
-};
-
-exports.handleResetPassword = async (req, res) => {
-    const { password, confirmPassword } = req.body;
-    console.log(password, confirmPassword);
-
-    if (password !== confirmPassword) {
-        req.flash("error", "کلمه های عبور یاکسان نیستند");
-
-        return res.render("resetPass", {
-            pageTitle: "تغییر پسورد",
-            path: "/login",
-            message: req.flash("success_msg"),
-            error: req.flash("error"),
-            userId: req.params.id,
-        });
-    }
-
-    const user = await User.findOne({ _id: req.params.id });
+    const user = await User.findOne({ _id: decodedToken.userId });
 
     if (!user) {
-        return res.redirect("/404");
+        const error = new Error("کاربری با این شناسه در پایگاه داده وجود ندارد.");
+        error.statusCode = 404;
+        throw error;
     }
-
     user.password = password;
     await user.save();
-
-    req.flash("success_msg", "پسورد شما با موفقیت بروزرسانی شد");
-    res.redirect("/users/login");
-};
+    res.status(200).json({message: "کلمه عبور با موفقیت تغییر کرد."});
+    } catch (err) {
+        next(err);
+    }
+}
