@@ -8,7 +8,7 @@
         "dev": "cross-env NODE_ENV=development DEBUG=weblog-project nodemon app"
     },
     "keywords": [],
-    "author": "Younes Ghorbany",
+    "author": "Milad Fallah",
     "license": "MIT",
     "dependencies": {
         "app-root-path": "^3.0.0",
